@@ -1,0 +1,8 @@
+{
+  "uuid": "xm5-mode@snizovtsev.github.io",
+  "name": "XM5 Noise Control",
+  "description": "Switch Sony WH-1000XM5 noise-control mode (off / noise cancelling / ambient) from the Quick Settings sound output menu. Speaks Sony's RFCOMM protocol directly via BlueZ.",
+  "shell-version": ["50"],
+  "url": "https://github.com/snizovtsev/xm5",
+  "version": 1
+}

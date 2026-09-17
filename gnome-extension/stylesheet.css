@@ -1,0 +1,46 @@
+/* XM5 Noise Control - dark theme (default). Mirrors `.quick-toggle-menu .header .icon`:
+   icon-size 1.6365em, padding 9px, border-radius 999px, bg rgba(255,255,255,0.2). */
+
+.quick-toggle-menu .header .xm5-pill {
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.2);
+  spacing: 0px;
+}
+
+.quick-toggle-menu .header .xm5-pill-button {
+  padding: 9px;
+  border-radius: 999px;
+  background-color: transparent;
+  color: inherit;
+  transition-duration: 100ms;
+}
+
+.quick-toggle-menu .header .xm5-pill-button:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.quick-toggle-menu .header .xm5-pill-button:active {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.quick-toggle-menu .header .xm5-pill-button:focus {
+  box-shadow: inset 0 0 0 2px st-transparentize(st-mix(-st-accent-color, #ffffff, 60%), 0.2);
+}
+
+.quick-toggle-menu .header .xm5-pill-button:insensitive {
+  color: st-transparentize(#ffffff, 0.5);
+}
+
+.quick-toggle-menu .header .xm5-pill.expanded .xm5-pill-button.current {
+  background-color: -st-accent-color;
+  color: -st-accent-fg-color;
+}
+
+.quick-toggle-menu .header .xm5-pill.pending {
+  color: st-transparentize(#ffffff, 0.5);
+}
+
+.quick-toggle-menu .header .xm5-pill-icon {
+  icon-size: 1.6365em;
+  -st-icon-style: symbolic;
+}
