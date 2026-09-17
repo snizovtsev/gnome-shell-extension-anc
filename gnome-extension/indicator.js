@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // indicator.js - step-1 UI: a top-bar button showing the current mode with a
 // radio menu to switch it. Created only while the headset control link is up.
 

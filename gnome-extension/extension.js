@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // XM5 Noise Control - GNOME Shell extension entry point.
 //
 // Owns one Xm5Backend (BlueZ + Sony protocol) and two optional UI pieces:

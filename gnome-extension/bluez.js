@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // bluez.js - find a connected Sony headset via BlueZ, open its RFCOMM control
 // service through the org.bluez.Profile1 API (BlueZ resolves the channel from the
 // service UUID and hands us a socket fd), and keep a SonySession alive on it.

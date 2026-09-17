@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+
 """
 xm5.py - show / set the noise-control mode of Sony WH-1000XM5 headphones
 from Linux over the existing Bluetooth connection (Sony proprietary RFCOMM

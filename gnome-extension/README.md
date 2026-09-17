@@ -27,7 +27,7 @@ the extension is disabled) the stock headphones icon is restored.
 ## Install
 
 ```
-ln -s "$PWD/gnome-extension" ~/.local/share/gnome-shell/extensions/xm5-mode@nizovtsev
+ln -s "$PWD/gnome-extension" ~/.local/share/gnome-shell/extensions/xm5-mode@snizovtsev.github.io
 ```
 
 Then log out and back in (Wayland cannot reload the live shell), and:
@@ -68,3 +68,8 @@ extension.
 XM5_TEST_OPEN=1 dev/run-headless.sh /tmp/xm5-bus &
 dev/drive.py -a /tmp/xm5-bus shot /tmp/shot.png
 ```
+
+## License
+
+GPL-2.0-or-later, the license GNOME Shell itself uses and the one
+extensions.gnome.org requires. See `../LICENSE`.

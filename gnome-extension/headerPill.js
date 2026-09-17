@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // headerPill.js - step-2 UI.
 //
 // Xm5Pill: an St.BoxLayout that looks like the stock Quick Settings header icon

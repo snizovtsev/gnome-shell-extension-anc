@@ -1,4 +1,7 @@
 #!/usr/bin/env -S gjs -m
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // Standalone test of the backend without GNOME Shell:
 //   gjs -m test-backend.js            watch: print state changes, exit on Ctrl-C
 //   gjs -m test-backend.js nc         set a mode once connected, then exit

@@ -35,3 +35,11 @@ SET, disconnect. The headset keeps A2DP/HFP running throughout.
 
 Sources: Gadgetbridge `service/devices/sony/headphones/` (SonyProtocolImplV2,
 Message.java, PayloadTypeV1), https://github.com/Freeyourgadget/Gadgetbridge
+
+## License
+
+GPL-2.0-or-later — see `LICENSE`.
+
+The wire protocol above was documented by the Gadgetbridge project
+(AGPL-3.0-or-later); the code here is an independent implementation written from
+that documentation, not a translation of their sources.

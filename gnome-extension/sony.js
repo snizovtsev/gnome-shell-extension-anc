@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+//
 // sony.js - Sony headphones RFCOMM protocol ("v2" variant, WH-1000XM5).
 // Port of xm5.py. Shell-independent: only GLib/GObject/Gio, usable from plain gjs.
 //

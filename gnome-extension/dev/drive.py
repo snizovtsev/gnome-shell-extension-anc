@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+
 """
 drive.py - poke a (headless) nested GNOME Shell over its session bus.
 

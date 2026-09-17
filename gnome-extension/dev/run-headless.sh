@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
+#
 # Run a headless nested GNOME Shell with only this extension enabled, for
 # development without a visible window. Drive it with dev/drive.py (screenshots,
 # clicks, keys over the nested session bus).
