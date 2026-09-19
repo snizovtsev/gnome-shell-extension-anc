@@ -11,7 +11,9 @@ Two front-ends share one protocol implementation:
 - **`scripts/*.py`** a CLI for scripts and keybindings.
 
 **Supported devices:**
-- Sony WH-1000XM5: proprietary RFCOMM protocol, "v2" variant);
+- Sony WH-1000XM5: proprietary RFCOMM protocol, "v2" variant (extension + `scripts/xm5.py`);
+- Samsung Galaxy Buds FE (and, untested, Buds Pro / 2 / 2 Pro): Samsung SPP
+  protocol.
 
 ![pill collapsed and expanded](docs/pill.png)
 
@@ -59,6 +61,16 @@ scripts/xm5.py --json          # {"mode": "nc", "focus_on_voice": false, "ambien
 scripts/xm5.py -v get          # dump raw frames
 ```
 
+Galaxy Buds use the same commands with `scripts/buds.py`; the extras differ:
+
+```
+scripts/buds.py set ambient --level 2       # ambient volume 0..2
+scripts/buds.py set nc --anc-level high     # ANC strength low|high: the FE firmware
+                                            # accepts and reports it, but Samsung's app
+                                            # hides it on this model, so the effect is unverified
+scripts/buds.py --json   # {"mode": "off", "ambient_level": 1, "anc_level": "low", "battery_left": 94, ...}
+```
+
 Dependencies: python3, dbus-python, PyGObject (Arch: `python-dbus python-gobject`).
 
 Each invocation takes roughly a second: connect, init handshake, GET, optional
@@ -76,7 +88,8 @@ extensions.gnome.org requires.
 | `headerPill.js` | `Xm5Pill` (the widget) and `HeaderPillInstaller` (swaps it into the Sound Output header, restores the stock icon). |
 | `indicator.js` | Optional top-bar button with a radio menu. Off by default; set `SHOW_INDICATOR = true` in `extension.js`. Useful when the volume slider has no device menu (only one output device present). |
 | `extension.js` | Entry point. |
-| `scripts/xm5.py` | The CLI. |
+| `scripts/xm5.py` | The Sony CLI. |
+| `scripts/buds.py` | The Galaxy Buds CLI. |
 | `dev/` | Development helpers, not shipped. |
 
 BlueZ resolves the RFCOMM channel from the service UUID
