@@ -3,7 +3,7 @@
 //
 // headerPill.js - step-2 UI.
 //
-// Xm5Pill: an St.BoxLayout that looks like the stock Quick Settings header icon
+// AncPill: an St.BoxLayout that looks like the stock Quick Settings header icon
 // circle (`.quick-toggle-menu .header .icon`), shows the current mode, and on
 // click grows into a "sausage" of three mode buttons. Selecting another mode
 // emits 'mode-selected' and collapses back (optimistically showing the new mode,
@@ -20,17 +20,17 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {MODES, MODE_LABELS} from './sony.js';
+import {MODES, MODE_LABELS} from './session.js';
 
 const ANIM_MS = 180;
 const PENDING_TIMEOUT_MS = 4000;
 
-export const Xm5Pill = GObject.registerClass({
+export const AncPill = GObject.registerClass({
     Signals: {'mode-selected': {param_types: [GObject.TYPE_STRING]}},
-}, class Xm5Pill extends St.BoxLayout {
+}, class AncPill extends St.BoxLayout {
     _init(gicons) {
         super._init({
-            style_class: 'xm5-pill',
+            style_class: 'anc-pill',
             orientation: Clutter.Orientation.HORIZONTAL,
             clip_to_allocation: true,
             reactive: true,
@@ -57,9 +57,9 @@ export const Xm5Pill = GObject.registerClass({
     }
 
     _makeButton(isCurrent) {
-        const icon = new St.Icon({style_class: 'xm5-pill-icon'});
+        const icon = new St.Icon({style_class: 'anc-pill-icon'});
         const btn = new St.Button({
-            style_class: `xm5-pill-button${isCurrent ? ' current' : ''}`,
+            style_class: `anc-pill-button${isCurrent ? ' current' : ''}`,
             child: icon,
             can_focus: true,
             track_hover: true,
@@ -305,11 +305,11 @@ export class HeaderPillInstaller {
         const header = menu?._header;
         const stockIcon = menu?._headerIcon;
         if (!header || !stockIcon || stockIcon.get_parent() !== header) {
-            console.warn('[xm5-mode] volume output menu header not found; pill not installed');
+            console.warn('[anc-mode] volume output menu header not found; pill not installed');
             return;
         }
 
-        const pill = new Xm5Pill(this._gicons);
+        const pill = new AncPill(this._gicons);
         this._pill = pill;
         this._menu = menu;
 
@@ -319,7 +319,7 @@ export class HeaderPillInstaller {
         pill.setMode(this._backend.mode ?? 'off');
         pill.connect('mode-selected', (p, mode) => {
             this._backend.setMode(mode).catch(e => {
-                console.error(`[xm5-mode] setMode(${mode}) failed: ${e.message}`);
+                console.error(`[anc-mode] setMode(${mode}) failed: ${e.message}`);
                 if (this._pill === p)
                     p.setMode(this._backend.mode ?? 'off');
             });
@@ -342,7 +342,7 @@ export class HeaderPillInstaller {
         // Test hook (headless dev only): keep the QS panel and the output submenu
         // open so a screenshot can capture the pill without simulating a precise
         // click on the slider's tiny arrow.
-        if (GLib.getenv('XM5_TEST_OPEN')) {
+        if (GLib.getenv('ANC_TEST_OPEN')) {
             this._testTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
                 const qs = Main.panel.statusArea.quickSettings.menu;
                 if (!qs.isOpen) {

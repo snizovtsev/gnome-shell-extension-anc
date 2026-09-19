@@ -5,7 +5,7 @@ cancelling, or ambient sound — on Linux, without the vendor's app, without roo
 and without re-pairing. It talks to the headset over the Bluetooth connection
 that is already up.
 
-Two front-ends share one protocol implementation:
+Two front-ends share one set of protocol implementations:
 
 - a **GNOME Shell extension** that puts the modes into Quick Settings;
 - **`scripts/*.py`** a CLI for scripts and keybindings.
@@ -13,7 +13,7 @@ Two front-ends share one protocol implementation:
 **Supported devices:**
 - Sony WH-1000XM5: proprietary RFCOMM protocol, "v2" variant (extension + `scripts/xm5.py`);
 - Samsung Galaxy Buds FE (and, untested, Buds Pro / 2 / 2 Pro): Samsung SPP
-  protocol.
+  protocol as documented by GalaxyBudsClient (extension + `scripts/buds.py`).
 
 ![pill collapsed and expanded](docs/pill.png)
 
@@ -40,13 +40,13 @@ the extension is disabled) the stock headphones icon is restored.
 ### Install
 
 ```
-ln -s "$PWD" ~/.local/share/gnome-shell/extensions/xm5-mode@snizovtsev.github.io
+ln -s "$PWD" ~/.local/share/gnome-shell/extensions/anc-mode@snizovtsev.github.io
 ```
 
 Then log out and back in (Wayland cannot reload the live shell), and:
 
 ```
-gnome-extensions enable xm5-mode@snizovtsev.github.io
+gnome-extensions enable anc-mode@snizovtsev.github.io
 ```
 
 ## CLI
@@ -83,39 +83,45 @@ extensions.gnome.org requires.
 
 | Path | What it is |
 | --- | --- |
-| `sony.js` | The protocol in GJS: frame encode/decode, sequence/ACK handling, ambient-sound-control GET/SET/NOTIFY. A port of `scripts/xm5.py`. |
-| `bluez.js` | `Xm5Backend`: watches BlueZ for a connected supported device, opens its RFCOMM control service, keeps one `SonySession` alive, emits `state-changed` / `mode-changed`. |
-| `headerPill.js` | `Xm5Pill` (the widget) and `HeaderPillInstaller` (swaps it into the Sound Output header, restores the stock icon). |
+| `session.js` | The device-independent part: the three `MODES`, and `StreamSession`, the base class every driver extends. Its doc comment is the contract (`open()`, `setMode()`, `mode`, `state`, `mode-changed`, `closed`) the backend and UI rely on. |
+| `sony.js` | `SonySession`: Sony frame encode/decode, sequence/ACK handling, ambient-sound-control GET/SET/NOTIFY. A port of `scripts/xm5.py`. |
+| `samsung.js` | `BudsSession`: Samsung SPP framing with CRC-16, extended status, NOISE_CONTROLS set and its ACK / update replies. A port of `scripts/buds.py`. |
+| `devices.js` | The driver list. Each driver is `{id, match({name, uuids}) -> service UUID, Session}`; adding a headset means one new module and one line here. |
+| `bluez.js` | `HeadsetBackend`: watches BlueZ for a connected device some driver claims, opens its RFCOMM control service, keeps one session alive, emits `state-changed` / `mode-changed`. Knows nothing vendor-specific. |
+| `headerPill.js` | `AncPill` (the widget) and `HeaderPillInstaller` (swaps it into the Sound Output header, restores the stock icon). |
 | `indicator.js` | Optional top-bar button with a radio menu. Off by default; set `SHOW_INDICATOR = true` in `extension.js`. Useful when the volume slider has no device menu (only one output device present). |
 | `extension.js` | Entry point. |
 | `scripts/xm5.py` | The Sony CLI. |
 | `scripts/buds.py` | The Galaxy Buds CLI. |
 | `dev/` | Development helpers, not shipped. |
 
-BlueZ resolves the RFCOMM channel from the service UUID
-`956c7b26-d49a-4ba8-b03f-b17d393cb6e2` through the `org.bluez.Profile1` D-Bus
-API and hands over a socket fd, so no `sdptool` is needed. The CLI's `-c N`
+BlueZ resolves the RFCOMM channel from the control service UUID each driver
+advertises (Sony `956c7b26-d49a-4ba8-b03f-b17d393cb6e2`, Samsung
+`2e73a4ad-332d-41fc-90e2-16bef06523f2`) through the `org.bluez.Profile1` D-Bus
+API and hands over a socket fd, so no `sdptool` is needed. The CLIs' `-c N`
 connects to RFCOMM channel N directly using the stdlib only (untested fallback).
 
 Because the extension holds the RFCOMM control link open, it follows mode
-changes made with the button on the headset itself. Only one program can hold
-that link at a time, so `scripts/xm5.py` cannot connect while the extension is
-enabled, and vice versa.
+changes made with the buttons on the headset itself. Only one program can hold
+that link at a time, so the CLIs cannot connect while the extension is enabled,
+and vice versa.
 
 ## Development
 
 `dev/run-headless.sh` starts a throwaway nested GNOME Shell (in-memory settings,
 so nothing touches your real session) with only this extension enabled, and
 `dev/drive.py` screenshots and clicks it over the nested session bus. Setting
-`XM5_TEST_OPEN=1` makes the extension auto-open the Sound Output menu so the
+`ANC_TEST_OPEN=1` makes the extension auto-open the Sound Output menu so the
 pill is easy to screenshot.
 
 ```
-XM5_TEST_OPEN=1 dev/run-headless.sh /tmp/xm5-bus &
-dev/drive.py -a /tmp/xm5-bus shot /tmp/shot.png
+ANC_TEST_OPEN=1 dev/run-headless.sh /tmp/anc-bus &
+dev/drive.py -a /tmp/anc-bus shot /tmp/shot.png
 ```
 
 ## Protocol notes
+
+### Sony
 
 As observed on one WH-1000XM5 (firmware reported by the init reply
 `01 00 03 00 20 16 00 00`):
@@ -134,11 +140,32 @@ set mode : 0C [68 17 01 on amb voice level]  ->  ACK, 0C [69 17 ...] (notify)
 Sources: Gadgetbridge `service/devices/sony/headphones/` (SonyProtocolImplV2,
 Message.java, PayloadTypeV1), https://github.com/Freeyourgadget/Gadgetbridge
 
+### Samsung
+
+As observed on Galaxy Buds FE (extended status revision 3):
+
+```
+frame    = FD  hdr:2LE  id  payload  crc16:2LE  DD
+hdr      = size | flags; size = len(payload) + 3, flag 1000 = device -> host
+crc16    = CRC-16/XMODEM over id + payload
+on connect : 61 [rev .. battL battR .. mode@12 .. ambVol@23 ancLevel@24 ..]   (pushed)
+set mode   : 78 [mode]  ->  42 [78 mode]   (ACK; only when something changed)
+             re-selecting the current mode gets 61 + 77 [mode ..] instead
+button     : 77 [mode wear..]  pushed by the buds
+ambient vol: 84 [0..2]  ->  42 [84 vol];  anc level: 83 [0|1]  ->  42 [83 lvl]
+    mode 00 normal, 01 noise cancelling, 02 ambient, 03 adaptive
+```
+
+Sources: GalaxyBudsClient `GalaxyBudsClient/Message/` (SppMessage,
+SppMessageEnums, Decoder/ExtendedStatusUpdateDecoder) and
+`Model/Constants.cs`, https://github.com/ThePBone/GalaxyBudsClient
+
 ## License
 
 GPL-2.0-or-later — the license GNOME Shell itself uses and the one
 extensions.gnome.org requires. See `LICENSE`.
 
-The wire protocol above was documented by the Gadgetbridge project
-(AGPL-3.0-or-later); the code here is an independent implementation written from
-that documentation, not a translation of their sources.
+The wire protocols above were documented by the Gadgetbridge project
+(AGPL-3.0-or-later) and by GalaxyBudsClient (GPL-3.0); the code here is an
+independent implementation written from that documentation, not a translation of
+their sources.

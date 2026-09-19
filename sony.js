@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
 //
 // sony.js - Sony headphones RFCOMM protocol ("v2" variant, WH-1000XM5).
-// Port of xm5.py. Shell-independent: only GLib/GObject/Gio, usable from plain gjs.
+// Port of scripts/xm5.py. Shell-independent: only GLib/GObject/Gio.
 //
 // frame     = 0x3E  escape(type seq len[4,BE] payload checksum)  0x3C
 // escape    = 0x3E/0x3C/0x3D -> 0x3D, (b & 0xEF)
@@ -13,7 +13,8 @@
 
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
-import Gio from 'gi://Gio';
+
+import {StreamSession, MODES, hex} from './session.js';
 
 export const SONY_UUID_V1 = '96cc203e-5068-46ad-b32d-e316f5e069ba';
 export const SONY_UUID_V2 = '956c7b26-d49a-4ba8-b03f-b17d393cb6e2';
@@ -26,20 +27,6 @@ export const Payload = {
     INIT_REQ: 0x00, INIT_REP: 0x01,
     ASC_GET: 0x66, ASC_RET: 0x67, ASC_SET: 0x68, ASC_NOTIFY: 0x69,
 };
-
-export const MODES = ['off', 'nc', 'ambient'];
-export const MODE_LABELS = {
-    off: 'Off',
-    nc: 'Noise Cancelling',
-    ambient: 'Ambient Sound',
-};
-
-Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async');
-Gio._promisify(Gio.OutputStream.prototype, 'write_all_async');
-
-export function hex(bytes) {
-    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-}
 
 function escape(bytes) {
     const out = [];
@@ -118,78 +105,41 @@ export function parseAsc(pl) {
 const ACK_TIMEOUT_MS = 3000;
 
 /**
- * One RFCOMM session with the headset. Owns the read loop, ACK/sequence
- * bookkeeping and the ambient-sound-control state.
+ * Sony session: ACK/sequence bookkeeping on top of StreamSession, plus the
+ * ambient-sound-control GET/SET/NOTIFY.
  *
- * Signals:
- *   mode-changed(mode: string, level: int, focusOnVoice: bool)
- *   closed()
+ * state = parseAsc() result: {mode, level (1..20), focusOnVoice, hasWind, raw}
  */
-export const SonySession = GObject.registerClass({
-    Signals: {
-        'mode-changed': {param_types: [GObject.TYPE_STRING, GObject.TYPE_INT, GObject.TYPE_BOOLEAN]},
-        'closed': {},
-    },
-}, class SonySession extends GObject.Object {
-    constructor(inputStream, outputStream, {log = null} = {}) {
-        super();
-        this._in = inputStream;
-        this._out = outputStream;
-        this._log = log ?? (() => {});
-        this._cancellable = new Gio.Cancellable();
+export const SonySession = GObject.registerClass(
+class SonySession extends StreamSession {
+    constructor(inputStream, outputStream, opts = {}) {
+        super(inputStream, outputStream, opts);
         this._seq = 0;
         this._buf = [];
-        this._closed = false;
-        this._pendingAck = null;           // {resolve, reject, timeoutId}
-        this._waiters = new Map();         // payload type -> [{resolve, reject, timeoutId}]
+        this._pendingAck = null;            // {resolve, reject, timeoutId}
         this._cmdChain = Promise.resolve(); // serialize commands (one in flight)
-        this._writeChain = Promise.resolve(); // serialize stream writes
-        this.state = null;                 // last parseAsc() result
-        this._readLoop().catch(e => {
-            if (!this._cancellable.is_cancelled())
-                this._log(`read loop error: ${e.message}`);
-            this.close();
-        });
     }
 
-    get closed() {
-        return this._closed;
-    }
+    // ---- framing -------------------------------------------------------
 
-    // ---- transport -----------------------------------------------------
-
-    async _readLoop() {
-        for (;;) {
-            const bytes = await this._in.read_bytes_async(512, GLib.PRIORITY_DEFAULT, this._cancellable);
-            const data = bytes.toArray();
-            if (data.length === 0)
-                throw new Error('EOF');
-            for (const b of data) {
-                if (b === HDR) {
-                    this._buf = [];
-                } else if (b === TRL) {
-                    let frame = null;
-                    try {
-                        frame = decode(this._buf);
-                    } catch (e) {
-                        this._log(`bad frame: ${e.message}`);
-                    }
-                    this._buf = [];
-                    if (frame)
-                        this._handle(frame);
-                } else {
-                    this._buf.push(b);
+    _onData(data) {
+        for (const b of data) {
+            if (b === HDR) {
+                this._buf = [];
+            } else if (b === TRL) {
+                let frame = null;
+                try {
+                    frame = decode(this._buf);
+                } catch (e) {
+                    this._log(`bad frame: ${e.message}`);
                 }
+                this._buf = [];
+                if (frame)
+                    this._handle(frame);
+            } else {
+                this._buf.push(b);
             }
         }
-    }
-
-    _write(bytes) {
-        this._log(`-> ${hex(bytes)}`);
-        const p = this._writeChain.then(() =>
-            this._out.write_all_async(bytes, GLib.PRIORITY_DEFAULT, this._cancellable));
-        this._writeChain = p.catch(() => {});
-        return p;
     }
 
     _handle({type, seq, payload}) {
@@ -213,35 +163,10 @@ export const SonySession = GObject.registerClass({
         const ptype = payload[0];
         if (type === MessageType.CMD1 && (ptype === Payload.ASC_RET || ptype === Payload.ASC_NOTIFY)) {
             const st = parseAsc(payload);
-            if (st) {
-                this.state = st;
-                this.emit('mode-changed', st.mode, st.level, st.focusOnVoice);
-            }
+            if (st)
+                this._setState(st);
         }
-        const ws = this._waiters.get(ptype);
-        if (ws && ws.length) {
-            const w = ws.shift();
-            GLib.Source.remove(w.timeoutId);
-            w.resolve(payload);
-        }
-    }
-
-    /** Register interest in the next COMMAND_1 message with payload[0] === ptype. */
-    _waitFor(ptype, timeoutMs) {
-        return new Promise((resolve, reject) => {
-            const w = {resolve, reject, timeoutId: 0};
-            w.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
-                const ws = this._waiters.get(ptype) ?? [];
-                const i = ws.indexOf(w);
-                if (i >= 0)
-                    ws.splice(i, 1);
-                reject(new Error(`no reply 0x${ptype.toString(16)}`));
-                return GLib.SOURCE_REMOVE;
-            });
-            if (!this._waiters.has(ptype))
-                this._waiters.set(ptype, []);
-            this._waiters.get(ptype).push(w);
-        });
+        this._dispatch(ptype, payload);
     }
 
     /** Send a COMMAND and resolve when the headset ACKs it. Commands are serialized. */
@@ -270,24 +195,35 @@ export const SonySession = GObject.registerClass({
         return p;
     }
 
+    /** Send a COMMAND whose answer is a COMMAND_1 with payload[0] === replyType. */
+    async _request(payload, replyType, timeoutMs = ACK_TIMEOUT_MS) {
+        const reply = this._waitFor(replyType, timeoutMs);
+        reply.catch(() => {}); // no unhandled rejection if command() fails first
+        await this.command(payload);
+        return reply;
+    }
+
+    _onClose() {
+        if (this._pendingAck) {
+            GLib.Source.remove(this._pendingAck.timeoutId);
+            this._pendingAck.reject(new Error('session closed'));
+            this._pendingAck = null;
+        }
+    }
+
     // ---- high level ----------------------------------------------------
 
-    async init() {
-        const reply = this._waitFor(Payload.INIT_REP, ACK_TIMEOUT_MS);
-        await this.command([Payload.INIT_REQ, 0x00]);
-        const pl = await reply;
+    async open() {
+        const pl = await this._request([Payload.INIT_REQ, 0x00], Payload.INIT_REP);
         this._log(`init reply: ${hex(pl)}`);
-        return pl;
+        await this.getState();
     }
 
     /** Query ambient sound control; resolves with parseAsc() result (also emits mode-changed). */
     async getState() {
         for (const sub of [0x17, 0x15]) {
-            const reply = this._waitFor(Payload.ASC_RET, 2000);
-            await this.command([Payload.ASC_GET, sub]);
             try {
-                const pl = await reply;
-                const st = parseAsc(pl);
+                const st = parseAsc(await this._request([Payload.ASC_GET, sub], Payload.ASC_RET, 2000));
                 if (st)
                     return st;
             } catch (e) {
@@ -299,7 +235,7 @@ export const SonySession = GObject.registerClass({
 
     /**
      * Set the mode ('off' | 'nc' | 'ambient'); optional {level: 1..20, voice: bool}.
-     * Resolves with the confirmed state (from NOTIFY, or a fresh GET).
+     * Resolves with the confirmed mode (from NOTIFY, or a fresh GET).
      */
     async setMode(mode, {level = null, voice = null} = {}) {
         if (!MODES.includes(mode))
@@ -320,38 +256,26 @@ export const SonySession = GObject.registerClass({
         if (level !== null)
             pl[vi + 1] = Math.max(1, Math.min(20, level | 0));
 
-        const notify = this._waitFor(Payload.ASC_NOTIFY, 1500);
-        await this.command(pl);
+        let st = null;
         try {
-            return parseAsc(await notify);
+            st = parseAsc(await this._request(pl, Payload.ASC_NOTIFY, 1500));
         } catch (e) {
-            return this.getState();
+            this._log(`no NOTIFY after SET: ${e.message}`);
         }
-    }
-
-    close() {
-        if (this._closed)
-            return;
-        this._closed = true;
-        this._cancellable.cancel();
-        if (this._pendingAck) {
-            GLib.Source.remove(this._pendingAck.timeoutId);
-            this._pendingAck.reject(new Error('session closed'));
-            this._pendingAck = null;
-        }
-        for (const ws of this._waiters.values()) {
-            for (const w of ws) {
-                GLib.Source.remove(w.timeoutId);
-                w.reject(new Error('session closed'));
-            }
-        }
-        this._waiters.clear();
-        try {
-            this._out.close(null);
-        } catch (e) { /* ignore */ }
-        try {
-            this._in.close(null);
-        } catch (e) { /* ignore */ }
-        this.emit('closed');
+        st ??= await this.getState();
+        return st.mode;
     }
 });
+
+/** Driver descriptor consumed by devices.js. */
+export const SONY_DRIVER = {
+    id: 'sony',
+    Session: SonySession,
+    match({uuids}) {
+        if (uuids.includes(SONY_UUID_V2))
+            return SONY_UUID_V2;
+        if (uuids.includes(SONY_UUID_V1))
+            return SONY_UUID_V1;
+        return null;
+    },
+};

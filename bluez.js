@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com>
 //
-// bluez.js - find a connected Sony headset via BlueZ, open its RFCOMM control
-// service through the org.bluez.Profile1 API (BlueZ resolves the channel from the
-// service UUID and hands us a socket fd), and keep a SonySession alive on it.
+// bluez.js - find a connected supported headset via BlueZ, open its RFCOMM
+// control service through the org.bluez.Profile1 API (BlueZ resolves the channel
+// from the service UUID and hands us a socket fd), and keep a driver session
+// alive on it. Which headsets are supported, and how to talk to them, is
+// decided by devices.js; this file only knows the StreamSession contract.
 //
 // Shell-independent: usable from plain gjs (see test-backend.js).
 
@@ -12,7 +14,7 @@ import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GioUnix from 'gi://GioUnix';
 
-import {SonySession, SONY_UUID_V1, SONY_UUID_V2} from './sony.js';
+import {findDriver} from './devices.js';
 
 const BLUEZ = 'org.bluez';
 const DEVICE_IFACE = 'org.bluez.Device1';
@@ -39,30 +41,38 @@ Gio._promisify(Gio.DBusConnection.prototype, 'call');
 Gio._promisify(Gio.DBusObjectManagerClient, 'new', 'new_finish');
 
 /**
- * Xm5Backend - the only object the UI talks to.
+ * HeadsetBackend - the only object the UI talks to.
  *
- * Properties (read-only): connected, name, mode, level, focusOnVoice
+ * Properties (read-only):
+ *   connected   control link up and the mode is known
+ *   name        BlueZ Alias of the tracked device, or null
+ *   driver      id of the driver in use ('sony', 'samsung', ...), or null
+ *   mode        current mode ('off' | 'nc' | 'ambient' | vendor-specific), or null
+ *   state       driver-specific state object (levels, battery, ...), or null
+ * Methods:
+ *   setMode(mode, opts)       resolves with the confirmed mode; opts are
+ *                             passed through to the driver's setMode
  * Signals:
- *   state-changed(connected: bool)      headset control link up / down
- *   mode-changed(mode, level, voice)    confirmed state from the headset
+ *   state-changed(connected: bool)   headset control link up / down
+ *   mode-changed(mode: string)       confirmed state from the headset
  */
-export const Xm5Backend = GObject.registerClass({
+export const HeadsetBackend = GObject.registerClass({
     Signals: {
         'state-changed': {param_types: [GObject.TYPE_BOOLEAN]},
-        'mode-changed': {param_types: [GObject.TYPE_STRING, GObject.TYPE_INT, GObject.TYPE_BOOLEAN]},
+        'mode-changed': {param_types: [GObject.TYPE_STRING]},
     },
-}, class Xm5Backend extends GObject.Object {
+}, class HeadsetBackend extends GObject.Object {
     constructor({log = null, verbose = false} = {}) {
         super();
-        this._logFn = log ?? ((msg) => console.log(`[xm5] ${msg}`));
+        this._logFn = log ?? ((msg) => console.log(`[headset] ${msg}`));
         this._verbose = verbose;
         this._cancellable = new Gio.Cancellable();
-        this._profilePath = `/org/xm5mode/profile${GLib.get_monotonic_time() % 100000}`;
-        this._exported = null;
-        this._registered = false;
+        this._profileBase = `/org/gnome_nc/profile${GLib.get_monotonic_time() % 100000}`;
+        this._profiles = new Map(); // service uuid -> {path, exported, ready: Promise}
         this._manager = null;
         this._device = null;      // Gio.DBusProxy of the tracked Device1
-        this._deviceUuid = null;  // Sony service UUID used for ConnectProfile
+        this._driver = null;      // driver descriptor from devices.js
+        this._deviceUuid = null;  // service UUID used for ConnectProfile
         this._session = null;
         this._fdWaiter = null;    // {resolve, reject} while ConnectProfile is in flight
         this._timeoutId = 0;
@@ -83,7 +93,7 @@ export const Xm5Backend = GObject.registerClass({
     // ---- public state ----------------------------------------------------
 
     get connected() {
-        return !!this._session && !this._session.closed && !!this._session.state;
+        return !!this._session && !this._session.closed && this._session.mode !== null;
     }
 
     get name() {
@@ -91,16 +101,16 @@ export const Xm5Backend = GObject.registerClass({
             ?? this._device?.get_cached_property('Name')?.deepUnpack() ?? null;
     }
 
+    get driver() {
+        return this._driver?.id ?? null;
+    }
+
     get mode() {
-        return this._session?.state?.mode ?? null;
+        return this._session?.mode ?? null;
     }
 
-    get level() {
-        return this._session?.state?.level ?? null;
-    }
-
-    get focusOnVoice() {
-        return this._session?.state?.focusOnVoice ?? null;
+    get state() {
+        return this._session?.state ?? null;
     }
 
     async setMode(mode, opts = {}) {
@@ -112,7 +122,6 @@ export const Xm5Backend = GObject.registerClass({
     // ---- lifecycle -------------------------------------------------------
 
     async start() {
-        this._exportProfile();
         this._manager = await Gio.DBusObjectManagerClient.new(
             Gio.DBus.system, Gio.DBusObjectManagerClientFlags.NONE,
             BLUEZ, '/', null, this._cancellable);
@@ -140,37 +149,42 @@ export const Xm5Backend = GObject.registerClass({
             this._callDevice(this._device, 'DisconnectProfile', new GLib.Variant('(s)', [this._deviceUuid]))
                 .catch(() => {});
         this._device = null;
-        if (this._registered) {
+        this._driver = null;
+        for (const {path, exported} of this._profiles.values()) {
             Gio.DBus.system.call(BLUEZ, '/org/bluez', 'org.bluez.ProfileManager1', 'UnregisterProfile',
-                new GLib.Variant('(o)', [this._profilePath]), null, Gio.DBusCallFlags.NONE, -1, null)
+                new GLib.Variant('(o)', [path]), null, Gio.DBusCallFlags.NONE, -1, null)
                 .catch(e => this._debug(`UnregisterProfile: ${e.message}`));
-            this._registered = false;
+            exported.unexport();
         }
-        if (this._exported) {
-            this._exported.unexport();
-            this._exported = null;
-        }
+        this._profiles.clear();
         this._manager = null;
     }
 
     // ---- Profile1 --------------------------------------------------------
 
-    _exportProfile() {
-        this._exported = Gio.DBusExportedObject.wrapJSObject(PROFILE_XML, this);
-        this._exported.export(Gio.DBus.system, this._profilePath);
-    }
-
-    async _ensureRegistered(uuid) {
-        if (this._registered)
-            return;
-        await Gio.DBus.system.call(BLUEZ, '/org/bluez', 'org.bluez.ProfileManager1', 'RegisterProfile',
-            new GLib.Variant('(osa{sv})', [this._profilePath, uuid, {
+    /** Register (once) a Profile1 object for `uuid`; BlueZ keys profiles by object path. */
+    _ensureRegistered(uuid) {
+        let prof = this._profiles.get(uuid);
+        if (prof)
+            return prof.ready;
+        const path = `${this._profileBase}/${this._profiles.size}`;
+        const exported = Gio.DBusExportedObject.wrapJSObject(PROFILE_XML, this);
+        exported.export(Gio.DBus.system, path);
+        const ready = Gio.DBus.system.call(BLUEZ, '/org/bluez', 'org.bluez.ProfileManager1', 'RegisterProfile',
+            new GLib.Variant('(osa{sv})', [path, uuid, {
                 Role: new GLib.Variant('s', 'client'),
                 AutoConnect: new GLib.Variant('b', false),
-                Name: new GLib.Variant('s', 'xm5-mode'),
+                Name: new GLib.Variant('s', 'gnome-noise-control'),
             }]),
-            null, Gio.DBusCallFlags.NONE, -1, this._cancellable);
-        this._registered = true;
+            null, Gio.DBusCallFlags.NONE, -1, this._cancellable)
+            .catch(e => {
+                exported.unexport();
+                this._profiles.delete(uuid);
+                throw e;
+            });
+        prof = {path, exported, ready};
+        this._profiles.set(uuid, prof);
+        return ready;
     }
 
     // Profile1 method handlers (called by Gio.DBusExportedObject)
@@ -207,14 +221,12 @@ export const Xm5Backend = GObject.registerClass({
 
     // ---- device tracking -------------------------------------------------
 
-    _sonyUuid(iface) {
-        const uuids = iface.get_cached_property('UUIDs')?.deepUnpack() ?? [];
-        const lower = uuids.map(u => u.toLowerCase());
-        if (lower.includes(SONY_UUID_V2))
-            return SONY_UUID_V2;
-        if (lower.includes(SONY_UUID_V1))
-            return SONY_UUID_V1;
-        return null;
+    /** @returns {{driver, uuid}|null} */
+    _match(iface) {
+        const uuids = (iface.get_cached_property('UUIDs')?.deepUnpack() ?? []).map(u => u.toLowerCase());
+        const name = iface.get_cached_property('Alias')?.deepUnpack()
+            ?? iface.get_cached_property('Name')?.deepUnpack() ?? '';
+        return findDriver({name, uuids});
     }
 
     _isConnected(iface) {
@@ -224,17 +236,15 @@ export const Xm5Backend = GObject.registerClass({
     _scan() {
         for (const obj of this._manager.get_objects()) {
             const iface = obj.get_interface(DEVICE_IFACE);
-            if (iface && this._sonyUuid(iface) && this._isConnected(iface)) {
-                this._adoptDevice(iface);
+            if (iface && this._isConnected(iface) && this._adoptDevice(iface))
                 return;
-            }
         }
     }
 
     _onInterfaceAdded(iface) {
         if (iface.get_interface_name() !== DEVICE_IFACE || this._device)
             return;
-        if (this._sonyUuid(iface) && this._isConnected(iface))
+        if (this._isConnected(iface))
             this._adoptDevice(iface);
     }
 
@@ -253,17 +263,23 @@ export const Xm5Backend = GObject.registerClass({
         if (this._device && iface.get_object_path() === this._device.get_object_path()) {
             if (!connected)
                 this._dropDevice();
-        } else if (!this._device && connected && this._sonyUuid(iface)) {
+        } else if (!this._device && connected) {
             this._adoptDevice(iface);
         }
     }
 
+    /** Start tracking `iface` if some driver claims it. @returns true if adopted */
     _adoptDevice(iface) {
+        const found = this._match(iface);
+        if (!found)
+            return false;
         this._device = iface;
-        this._deviceUuid = this._sonyUuid(iface);
+        this._driver = found.driver;
+        this._deviceUuid = found.uuid;
         this._reconnectAttempt = 0;
-        this._log(`headset ${this.name} (${iface.get_object_path()}) connected, opening control link`);
+        this._log(`${found.driver.id} headset ${this.name} (${iface.get_object_path()}) connected, opening control link`);
         this._scheduleConnect(CONNECT_DELAY_MS);
+        return true;
     }
 
     _dropDevice() {
@@ -272,8 +288,9 @@ export const Xm5Backend = GObject.registerClass({
         this._connectGeneration++;
         this._teardownSession();
         this._device = null;
+        this._driver = null;
         this._deviceUuid = null;
-        // maybe another Sony device is connected
+        // maybe another supported device is connected
         if (this._manager)
             this._scan();
     }
@@ -299,6 +316,7 @@ export const Xm5Backend = GObject.registerClass({
 
     async _connect(gen) {
         const device = this._device;
+        const driver = this._driver;
         const uuid = this._deviceUuid;
         if (!device || this._destroyed)
             return;
@@ -313,7 +331,7 @@ export const Xm5Backend = GObject.registerClass({
                     GLib.close(fd);
                     return;
                 }
-                await this._openSession(fd, gen);
+                await this._openSession(driver, fd, gen);
                 return;
             } catch (e) {
                 lastErr = e;
@@ -344,14 +362,14 @@ export const Xm5Backend = GObject.registerClass({
         });
     }
 
-    async _openSession(fd, gen) {
+    async _openSession(driver, fd, gen) {
         const input = new GioUnix.InputStream({fd, close_fd: true});
         const output = new GioUnix.OutputStream({fd, close_fd: false});
-        const session = new SonySession(input, output, {log: msg => this._debug(msg)});
+        const session = new driver.Session(input, output, {log: msg => this._debug(msg)});
         this._session = session;
-        session.connect('mode-changed', (s, mode, level, voice) => {
+        session.connect('mode-changed', (s, mode) => {
             if (s === this._session)
-                this.emit('mode-changed', mode, level, voice);
+                this.emit('mode-changed', mode);
         });
         session.connect('closed', s => {
             if (s !== this._session)
@@ -365,8 +383,7 @@ export const Xm5Backend = GObject.registerClass({
             }
         });
         try {
-            await session.init();
-            await session.getState();
+            await session.open();
         } catch (e) {
             session.close();
             throw e;

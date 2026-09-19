@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
    Copyright (C) 2026 Sergei Nizovtsev <snizovtsev@gmail.com> */
 
-/* XM5 Noise Control - light theme variant of stylesheet.css
+/* ANC Mode - light theme variant of stylesheet.css
    (`.quick-toggle-menu .header .icon` uses rgba(34,34,38,0.2) in gnome-shell-light.css). */
 
-.quick-toggle-menu .header .xm5-pill {
+.quick-toggle-menu .header .anc-pill {
   border-radius: 999px;
   background-color: rgba(34, 34, 38, 0.2);
   spacing: 0px;
 }
 
-.quick-toggle-menu .header .xm5-pill-button {
+.quick-toggle-menu .header .anc-pill-button {
   padding: 9px;
   border-radius: 999px;
   background-color: transparent;
@@ -18,32 +18,32 @@
   transition-duration: 100ms;
 }
 
-.quick-toggle-menu .header .xm5-pill-button:hover {
+.quick-toggle-menu .header .anc-pill-button:hover {
   background-color: rgba(34, 34, 38, 0.12);
 }
 
-.quick-toggle-menu .header .xm5-pill-button:active {
+.quick-toggle-menu .header .anc-pill-button:active {
   background-color: rgba(34, 34, 38, 0.2);
 }
 
-.quick-toggle-menu .header .xm5-pill-button:focus {
+.quick-toggle-menu .header .anc-pill-button:focus {
   box-shadow: inset 0 0 0 2px st-transparentize(st-mix(-st-accent-color, #000000, 60%), 0.2);
 }
 
-.quick-toggle-menu .header .xm5-pill-button:insensitive {
+.quick-toggle-menu .header .anc-pill-button:insensitive {
   color: st-transparentize(#222226, 0.5);
 }
 
-.quick-toggle-menu .header .xm5-pill.expanded .xm5-pill-button.current {
+.quick-toggle-menu .header .anc-pill.expanded .anc-pill-button.current {
   background-color: -st-accent-color;
   color: -st-accent-fg-color;
 }
 
-.quick-toggle-menu .header .xm5-pill.pending {
+.quick-toggle-menu .header .anc-pill.pending {
   color: st-transparentize(#222226, 0.5);
 }
 
-.quick-toggle-menu .header .xm5-pill-icon {
+.quick-toggle-menu .header .anc-pill-icon {
   icon-size: 1.6365em;
   -st-icon-style: symbolic;
 }

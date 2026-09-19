@@ -10,12 +10,12 @@ import St from 'gi://St';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {MODES, MODE_LABELS} from './sony.js';
+import {MODES, MODE_LABELS} from './session.js';
 
-export const Xm5Indicator = GObject.registerClass(
-class Xm5Indicator extends PanelMenu.Button {
+export const AncIndicator = GObject.registerClass(
+class AncIndicator extends PanelMenu.Button {
     _init(backend, gicons) {
-        super._init(0.5, 'WH-1000XM5', false);
+        super._init(0.5, backend.name ?? 'Headset', false);
         this._backend = backend;
         this._gicons = gicons;
 
@@ -27,7 +27,7 @@ class Xm5Indicator extends PanelMenu.Button {
             const item = new PopupMenu.PopupMenuItem(MODE_LABELS[mode]);
             item.connect('activate', () => {
                 this._backend.setMode(mode).catch(e =>
-                    console.error(`[xm5-mode] setMode(${mode}) failed: ${e.message}`));
+                    console.error(`[anc-mode] setMode(${mode}) failed: ${e.message}`));
             });
             this.menu.addMenuItem(item);
             this._items.set(mode, item);

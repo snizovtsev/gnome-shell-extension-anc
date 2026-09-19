@@ -101,7 +101,7 @@ class Input:
 
 def main():
     args = sys.argv[1:]
-    addr_file = "/tmp/xm5-nested-bus"
+    addr_file = "/tmp/anc-nested-bus"
     if args[:1] == ["-a"]:
         addr_file = args[1]
         args = args[2:]
