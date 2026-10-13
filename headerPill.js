@@ -18,12 +18,18 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {MODES, MODE_LABELS} from './session.js';
 
 const ANIM_MS = 180;
 const PENDING_TIMEOUT_MS = 4000;
+
+// PopupMenu.open()/close() take a {animate} params object since GNOME 51; 50
+// and earlier take a bare boolean.
+const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION);
+const NO_ANIMATION = SHELL_MAJOR >= 51 ? {animate: false} : false;
 
 export const AncPill = GObject.registerClass({
     Signals: {'mode-selected': {param_types: [GObject.TYPE_STRING]}},
@@ -347,7 +353,7 @@ export class HeaderPillInstaller {
                 const qs = Main.panel.statusArea.quickSettings.menu;
                 if (!qs.isOpen) {
                     qs.open();
-                    output.menu.open(false);
+                    output.menu.open(NO_ANIMATION);
                 }
                 return GLib.SOURCE_CONTINUE;
             });

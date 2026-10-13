@@ -33,7 +33,7 @@ the extension is disabled) the stock headphones icon is restored.
 
 ### Requirements
 
-- GNOME Shell 50 (Wayland or X11), tested on 50.4.
+- GNOME Shell 50 or 51 (Wayland or X11), tested on 50.4 and 51.0.
 - A supported headset paired and connected over Bluetooth.
 - No root, no Python; the extension uses GJS + BlueZ only.
 
