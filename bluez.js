@@ -309,9 +309,23 @@ export const HeadsetBackend = GObject.registerClass({
         const gen = ++this._connectGeneration;
         this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
             this._timeoutId = 0;
-            this._connect(gen).catch(e => this._log(`connect failed: ${e.message}`));
+            this._connect(gen).catch(e => {
+                if (gen !== this._connectGeneration || this._destroyed || !this._device)
+                    return;
+                // Typically BlueZ is still busy bringing up A2DP/HFP (br-connection-busy)
+                // or the headset is not ready yet; it stays "Connected" the whole time, so
+                // no property change will ever re-trigger us. Keep retrying with backoff.
+                this._retryConnect(`connect failed: ${e.message}`);
+            });
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    /** Re-arm the control-link connect with backoff while the device stays connected. */
+    _retryConnect(reason) {
+        const delay = RECONNECT_BACKOFF_MS[Math.min(this._reconnectAttempt++, RECONNECT_BACKOFF_MS.length - 1)];
+        this._log(`${reason}, reconnecting in ${delay / 1000}s`);
+        this._scheduleConnect(delay);
     }
 
     async _connect(gen) {
@@ -376,11 +390,8 @@ export const HeadsetBackend = GObject.registerClass({
                 return;
             this._session = null;
             this.emit('state-changed', false);
-            if (this._device && !this._destroyed) {
-                const delay = RECONNECT_BACKOFF_MS[Math.min(this._reconnectAttempt++, RECONNECT_BACKOFF_MS.length - 1)];
-                this._log(`control link closed, reconnecting in ${delay / 1000}s`);
-                this._scheduleConnect(delay);
-            }
+            if (this._device && !this._destroyed)
+                this._retryConnect('control link closed');
         });
         try {
             await session.open();
