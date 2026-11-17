@@ -75,6 +75,7 @@ export const HeadsetBackend = GObject.registerClass({
         this._deviceUuid = null;  // service UUID used for ConnectProfile
         this._session = null;
         this._fdWaiter = null;    // {resolve, reject} while ConnectProfile is in flight
+        this._releasing = null;   // Promise while a DisconnectProfile is in flight
         this._timeoutId = 0;
         this._reconnectAttempt = 0;
         this._destroyed = false;
@@ -145,9 +146,7 @@ export const HeadsetBackend = GObject.registerClass({
         this._cancellable.cancel();
         this._clearTimeout();
         this._teardownSession();
-        if (this._device && this._deviceUuid)
-            this._callDevice(this._device, 'DisconnectProfile', new GLib.Variant('(s)', [this._deviceUuid]))
-                .catch(() => {});
+        this._releaseProfile();
         this._device = null;
         this._driver = null;
         for (const {path, exported} of this._profiles.values()) {
@@ -337,6 +336,8 @@ export const HeadsetBackend = GObject.registerClass({
         await this._ensureRegistered(uuid);
         let lastErr = null;
         for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+            // a DisconnectProfile still in flight would tear down the new channel
+            await this._releasing;
             if (gen !== this._connectGeneration || this._destroyed)
                 return;
             try {
@@ -362,8 +363,12 @@ export const HeadsetBackend = GObject.registerClass({
             this._callDevice(device, 'ConnectProfile', new GLib.Variant('(s)', [uuid]))
                 .then(() => {
                     // BlueZ calls NewConnection before replying; if it did not, fail.
+                    // That means BlueZ considers the profile connected already: it
+                    // still holds a channel we no longer have. Drop it so the next
+                    // attempt gets a fresh one.
                     if (this._fdWaiter) {
                         this._fdWaiter = null;
+                        this._releaseProfile();
                         reject(new Error('ConnectProfile returned without NewConnection'));
                     }
                 })
@@ -390,8 +395,10 @@ export const HeadsetBackend = GObject.registerClass({
                 return;
             this._session = null;
             this.emit('state-changed', false);
-            if (this._device && !this._destroyed)
+            if (this._device && !this._destroyed) {
+                this._releaseProfile();
                 this._retryConnect('control link closed');
+            }
         });
         try {
             await session.open();
@@ -406,6 +413,26 @@ export const HeadsetBackend = GObject.registerClass({
         this._reconnectAttempt = 0;
         this._log(`control link up: ${this.name} mode=${this.mode}`);
         this.emit('state-changed', true);
+    }
+
+    /**
+     * Ask BlueZ to drop its side of the control channel. Closing our fd is not
+     * enough: bluetoothd keeps its own reference to the RFCOMM socket, so the
+     * channel stays up, the profile stays "connected", and every later
+     * ConnectProfile succeeds without handing us a new fd.
+     */
+    _releaseProfile() {
+        const device = this._device;
+        const uuid = this._deviceUuid;
+        if (!device || !uuid)
+            return;
+        const p = this._callDevice(device, 'DisconnectProfile', new GLib.Variant('(s)', [uuid]))
+            .catch(e => this._debug(`DisconnectProfile: ${e.message}`))
+            .finally(() => {
+                if (this._releasing === p)
+                    this._releasing = null;
+            });
+        this._releasing = p;
     }
 
     _teardownSession() {
